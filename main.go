@@ -3,16 +3,37 @@ package main
 import (
 	"log"
 	"net/http"
+	"os"
+
+	"github.com/joho/godotenv"
 )
 
+type config struct {
+	port   string
+	apiKey string
+}
+
 func main() {
+	err := godotenv.Load()
+	if err != nil {
+		log.Fatal("couldn't get enivornment variables: ", err)
+	}
+
+	apiKey := os.Getenv("API_KEY")
+	port := os.Getenv("PORT")
+
+	cfg := config{
+		port:   port,
+		apiKey: apiKey,
+	}
 	mux := http.NewServeMux()
 	var s http.Server
-	s.Addr = ":8080"
+	s.Addr = cfg.port
 	s.Handler = mux
 
 	mux.HandleFunc("GET /health", health)
 
+	log.Printf("server started on port: %v ...", s.Addr)
 	log.Fatal(s.ListenAndServe())
 }
 
