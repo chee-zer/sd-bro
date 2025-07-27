@@ -3,23 +3,23 @@ package main
 import (
 	"context"
 	"fmt"
-	"io"
+	"log"
+	"net/http"
 
 	genai "google.golang.org/genai"
 )
 
-func generateWithTextStream(w io.Writer) error {
+func (cfg *config) generateAndStreamResponse(w http.ResponseWriter, r *http.Request, session *ChatSession, prompt string) {
 	ctx := context.Background()
 
-	client, err := genai.NewClient(ctx, &genai.ClientConfig{
-		HTTPOptions: genai.HTTPOptions{APIVersion: "v1"},
-	})
+	client, err := genai.NewClient(ctx, cfg.clientConfig)
 	if err != nil {
-		return fmt.Errorf("failed to create genai client: %w", err)
+		log.Println("Failed to create genai client: ", err)
+		return
 	}
 
 	modelName := "gemini-2.0-flash-001"
-	contents := genai.Text("Why is the sky blue?")
+	contents := genai.Text(prompt)
 	config := &genai.GenerateContentConfig{
 		SystemInstruction: &genai.Content{
 			Parts: []*genai.Part{
@@ -30,27 +30,20 @@ func generateWithTextStream(w io.Writer) error {
 				{Text: "If the user gets stuck, offer a subtle hint or rephrase the question to nudge them toward the right concepts, referencing general system design principles."},
 				{Text: "Identify potential flaws or missing considerations in their proposed solutions and ask them to elaborate on how they would address these."},
 				{Text: "Keep the conversation strictly focused on the problem identified from the blog; do not deviate."},
-				{Text: "Structure your responses as an interviewer would."},
+				{Text: "Structure your responses as an friendly teacher would."},
 				{Text: "The user's remaining time will be provided with each response. If time is low, try to wrap up the discussion. Do not inform the user about the remaining time; only conclude with a polite note and well wishes for their goals once the time is over."},
+				{Text: "the new input will contain: {userReply, timeRemaining}"},
 			},
 		},
 	}
 
 	for resp, err := range client.Models.GenerateContentStream(ctx, modelName, contents, config) {
 		if err != nil {
-			return fmt.Errorf("failed to generate content: %w", err)
+			return
 		}
 
 		chunk := resp.Text()
 
 		fmt.Fprintln(w, chunk)
 	}
-
-	// Example response:
-	// The
-	//  sky is blue
-	//  because of a phenomenon called **Rayleigh scattering**. Here's the breakdown:
-	// ...
-
-	return nil
 }
