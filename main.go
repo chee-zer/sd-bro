@@ -9,15 +9,20 @@ import (
 	"sync"
 	"time"
 
+	"cloud.google.com/go/vertexai/genai"
 	"github.com/google/uuid"
 	"github.com/joho/godotenv"
-	genai "google.golang.org/genai"
 )
 
 type config struct {
 	port         string
 	apiKey       string
-	clientConfig *genai.ClientConfig
+	clientConfig ClientConfig
+}
+
+type ClientConfig struct {
+	Project  string
+	Location string
 }
 
 type ChatSession struct {
@@ -37,23 +42,23 @@ var (
 )
 
 func main() {
-	err := godotenv.Load()
-	if err != nil {
-		log.Fatal("couldn't get enivornment variables: ", err)
+	_ = godotenv.Load()
+	//logging with fatal here doesnt let me deploy
+	apiKey := os.Getenv("API_KEY")
+	if apiKey == "" {
+		log.Fatal("API_KEY not set")
 	}
 
-	apiKey := os.Getenv("API_KEY")
 	port := os.Getenv("PORT")
+	if port == "" {
+		port = "8080"
+	}
 	projectID := os.Getenv("PROJECT_ID")
 	location := os.Getenv("LOCATION")
 
-	clientConfig := &genai.ClientConfig{
+	clientConfig := ClientConfig{
 		Project:  projectID,
 		Location: location,
-		Backend:  genai.BackendVertexAI,
-		HTTPOptions: genai.HTTPOptions{
-			APIVersion: "v1",
-		},
 	}
 	cfg := config{
 		port:         port,
@@ -63,13 +68,14 @@ func main() {
 
 	mux := http.NewServeMux()
 	var s http.Server
-	s.Addr = cfg.port
+	s.Addr = ":" + cfg.port
 	s.Handler = mux
 
 	mux.HandleFunc("GET /health", health)
 	mux.HandleFunc("POST /start", cfg.startChatHandler)
+	mux.HandleFunc("POST /chat/{sessionId}", cfg.chatHandler)
 
-	log.Printf("server started on port: %v ...", s.Addr)
+	log.Printf("server listening on port: %v ...", s.Addr)
 	log.Fatal(s.ListenAndServe())
 }
 
@@ -83,21 +89,21 @@ type StartChatRequest struct {
 	TimeLimitSeconds int    `json:"timeLimitSeconds"`
 }
 
-type StartChatResponse struct {
-	SessionID string `json:"sessionId"`
-	Message   string `json:"message"`
-	Error     string `json:"error,omitempty"`
-}
+// type StartChatResponse struct {
+// 	SessionID string `json:"sessionId"`
+// 	Message   string `json:"message"`
+// 	Error     string `json:"error,omitempty"`
+// }
 
 func (cfg *config) startChatHandler(w http.ResponseWriter, r *http.Request) {
 
 	var req StartChatRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		resWithError(w, 400, "invalid request")
+		http.Error(w, "Invalid request body", http.StatusBadRequest)
 		return
 	}
 	if req.ArticleLink == "" || urlNotlValid(req.ArticleLink) {
-		resWithError(w, 400, "please provide a valid article link")
+		http.Error(w, "A valid 'articleLink' is required", http.StatusBadRequest)
 		return
 	}
 
@@ -129,33 +135,70 @@ func (cfg *config) startChatHandler(w http.ResponseWriter, r *http.Request) {
 		f.Flush()
 	}
 
-	initialPrompt := fmt.Sprintf("The article link: %s\nThe time remaining in seconds: %v", req.ArticleLink, req.TimeLimitSeconds)
-
-	cfg.generateAndStreamResponse(w, r, newSession, initialPrompt)
+	// Start streaming the LLM's first response.
+	cfg.generateAndStreamResponse(w, r, newSession)
 }
 
-type SendMessageResponse struct {
-	LLMResponse string `json:"llmResponse"`
-	Message     string `json:"message"`
-	Error       string `json:"error,omitempty"`
+// type SendMessageResponse struct {
+// 	LLMResponse string `json:"llmResponse"`
+// 	Message     string `json:"message"`
+// 	Error       string `json:"error,omitempty"`
+// }
+
+type ChatRequest struct {
+	UserMessage string `json:"userMessage"`
 }
 
-func (cfg *config) sendMessageHandler(w http.ResponseWriter, r *http.Request) {
-
-}
-
-func resWithError(w http.ResponseWriter, code int, msg string) {
-	if err := resWithJson(w, code, struct{ Error string }{Error: msg}); err != nil {
-		http.Error(w, err.Error(), code)
+func (cfg *config) chatHandler(w http.ResponseWriter, r *http.Request) {
+	sessionID := r.PathValue("sessionId")
+	if sessionID == "" {
+		http.Error(w, "Missing session ID in URL path", http.StatusBadRequest)
+		return
 	}
+
+	sessionsMutex.RLock()
+	session, ok := chatSessions[sessionID]
+	sessionsMutex.RUnlock()
+
+	if !ok || !session.IsActive {
+		http.Error(w, "Session not found or has expired", http.StatusNotFound)
+		return
+	}
+
+	var req ChatRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "Invalid request body", http.StatusBadRequest)
+		return
+	}
+	if req.UserMessage == "" {
+		http.Error(w, "User message cannot be empty", http.StatusBadRequest)
+		return
+	}
+
+	session.ChatHistory = append(session.ChatHistory, &genai.Content{
+		Parts: []genai.Part{genai.Text(req.UserMessage)},
+		Role:  "user",
+	})
+
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Connection", "keep-alive")
+
+	cfg.generateAndStreamResponse(w, r, session)
 }
 
-func resWithJson(w http.ResponseWriter, code int, payload any) error {
-	dat, err := json.Marshal(payload)
-	if err != nil {
-		return err
-	}
-	w.WriteHeader(code)
-	w.Write(dat)
-	return nil
-}
+// func resWithError(w http.ResponseWriter, code int, msg string) {
+// 	if err := resWithJson(w, code, struct{ Error string }{Error: msg}); err != nil {
+// 		http.Error(w, err.Error(), code)
+// 	}
+// }
+
+// func resWithJson(w http.ResponseWriter, code int, payload any) error {
+// 	dat, err := json.Marshal(payload)
+// 	if err != nil {
+// 		return err
+// 	}
+// 	w.WriteHeader(code)
+// 	w.Write(dat)
+// 	return nil
+// }
