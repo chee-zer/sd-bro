@@ -2,10 +2,12 @@ package main
 
 import (
 	"encoding/json"
+	"io"
 	"log"
 	"net/http"
 	"net/url"
 	"os"
+	"strconv"
 	"sync"
 	"time"
 
@@ -71,6 +73,8 @@ func main() {
 	mux.HandleFunc("GET /health", health)
 	mux.HandleFunc("POST /start", cfg.startChatHandler)
 	mux.HandleFunc("POST /chat/{sessionId}", cfg.chatHandler)
+	mux.HandleFunc("POST /stt", cfg.sttHandler)
+	mux.HandleFunc("POST /tts", cfg.ttsHandler)
 
 	c := cors.New(cors.Options{
 		AllowedOrigins:   []string{"http://localhost:3000", "http://localhost:5173", "http://127.0.0.1:3000"},
@@ -114,6 +118,15 @@ type ChatRequest struct {
 type ChatResponse struct {
 	Message string `json:"message"`
 	Error   string `json:"error,omitempty"`
+}
+
+type TtsRequest struct {
+	Text string `json:"text"`
+}
+
+type SttResponse struct {
+	Text  string `json:"text,omitempty"`
+	Error string `json:"error,omitempty"`
 }
 
 //handlers
@@ -224,6 +237,61 @@ func respondWithJSON(w http.ResponseWriter, code int, payload interface{}) {
 	}
 	w.WriteHeader(code)
 	w.Write(response)
+}
+
+func (cfg *config) sttHandler(w http.ResponseWriter, r *http.Request) {
+	//10 mb
+	if err := r.ParseMultipartForm(10 << 20); err != nil {
+		respondWithJSON(w, http.StatusBadRequest, SttResponse{Error: "Could not parse form"})
+		return
+	}
+
+	file, _, err := r.FormFile("audio")
+	if err != nil {
+		respondWithJSON(w, http.StatusBadRequest, SttResponse{Error: "Form file 'audio' is required"})
+		return
+	}
+	defer file.Close()
+
+	audioData, err := io.ReadAll(file)
+	if err != nil {
+		respondWithJSON(w, http.StatusInternalServerError, SttResponse{Error: "Could not read audio file"})
+		return
+	}
+
+	transcript, err := cfg.convertSpeechToText(r.Context(), audioData)
+	if err != nil {
+		respondWithJSON(w, http.StatusInternalServerError, SttResponse{Error: "Failed to process audio"})
+		return
+	}
+
+	respondWithJSON(w, http.StatusOK, SttResponse{Text: transcript})
+}
+
+func (cfg *config) ttsHandler(w http.ResponseWriter, r *http.Request) {
+	var req TtsRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		respondWithJSON(w, http.StatusBadRequest, map[string]string{"error": "Invalid request body"})
+		return
+	}
+	if req.Text == "" {
+		respondWithJSON(w, http.StatusBadRequest, map[string]string{"error": "Text cannot be empty"})
+		return
+	}
+
+	audioData, err := cfg.convertTextToSpeech(r.Context(), req.Text)
+	if err != nil {
+		respondWithJSON(w, http.StatusInternalServerError, map[string]string{"error": "Failed to generate audio"})
+		return
+	}
+	//for streaming
+	w.Header().Set("Content-Type", "audio/mpeg")
+	w.Header().Set("Content-Length", strconv.Itoa(len(audioData)))
+	w.Header().Set("Accept-Ranges", "bytes")
+
+	w.WriteHeader(http.StatusOK)
+
+	w.Write(audioData)
 }
 
 func isURL(str string) bool {
