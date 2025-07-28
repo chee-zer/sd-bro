@@ -6,6 +6,7 @@ SD Mate is an AI Assistant which makes system design articles into a friendly di
 ### Features
 - get an interview type discussion of any blog you find interesting.
 - The quality and difficulty of the questions will be tailored to your chosen session length(i.e, 5 minutes - Fast pace, high-level overview, advanced concepts, direct questions, concise hints. whereas for 15 minutes - Thorough pace, ground-up exploration, detailed questions, comprehensive hints.)
+- Audio mode, to simulate the experience of a live interview, improving your verbal communication skills under pressure.
 - Curated list of articles to choose from.
 
 ### why would you use it: 
