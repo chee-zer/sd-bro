@@ -23,7 +23,14 @@ func (cfg *config) convertSpeechToText(ctx context.Context, audioData []byte) (s
 		Config: &speechpb.RecognitionConfig{
 			Encoding:     speechpb.RecognitionConfig_WEBM_OPUS,
 			LanguageCode: "en-US",
-			Model:        "telephony",
+			//this is what the standard seems to be for stereo recodring, also removed sample rate for google to infer it.
+			// should have just made it in the frontend to request a mono channel recording tho
+			AudioChannelCount:                   2,
+			EnableSeparateRecognitionPerChannel: false,
+			//for using better models
+			EnableAutomaticPunctuation: true,
+			UseEnhanced:                true,
+			Model:                      "video",
 		},
 		Audio: &speechpb.RecognitionAudio{
 			AudioSource: &speechpb.RecognitionAudio_Content{Content: audioData},

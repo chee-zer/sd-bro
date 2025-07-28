@@ -77,10 +77,10 @@ func main() {
 	mux.HandleFunc("POST /tts", cfg.ttsHandler)
 
 	c := cors.New(cors.Options{
-		AllowedOrigins:   []string{"http://localhost:3000", "http://localhost:5173", "http://127.0.0.1:3000"},
+		AllowedOrigins:   []string{"*"},
 		AllowedMethods:   []string{"GET", "POST", "OPTIONS"},
-		AllowedHeaders:   []string{"Content-Type"},
-		AllowCredentials: true,
+		AllowedHeaders:   []string{"Content-Type", "Accept"},
+		AllowCredentials: false,
 	})
 
 	handler := c.Handler(mux)
