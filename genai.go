@@ -71,5 +71,6 @@ func getSystemInstructions() []genai.Part {
 		genai.Text("Structure your responses as a friendly teacher would."),
 		genai.Text("The user's remaining time will be provided with each prompt. If time is low, try to wrap up the discussion. Do not inform the user about the remaining time; only conclude with a polite note and well wishes for their goals once the time is over."),
 		genai.Text("Note, do not send back the 'time remaining in seconds'"),
+		genai.Text("REMOVE THE ASTERISKS IN TEXT FOR MARKDOWN FORMATTING, STRICTLY PLAIN TEXT, OR U GO TO JAIL"),
 	}
 }
